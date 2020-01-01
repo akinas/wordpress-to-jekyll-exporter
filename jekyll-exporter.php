@@ -42,6 +42,26 @@ if ( version_compare( PHP_VERSION, '5.3.0', '<' ) ) {
 require_once dirname( __FILE__ ) . '/lib/cli.php';
 require_once dirname( __FILE__ ) . '/vendor/autoload.php';
 
+function translit_sef($value){
+	$converter = array(
+		'а' => 'a',    'б' => 'b',    'в' => 'v',    'г' => 'g',    'д' => 'd',
+		'е' => 'e',    'ё' => 'e',    'ж' => 'zh',   'з' => 'z',    'и' => 'i',
+		'й' => 'y',    'к' => 'k',    'л' => 'l',    'м' => 'm',    'н' => 'n',
+		'о' => 'o',    'п' => 'p',    'р' => 'r',    'с' => 's',    'т' => 't',
+		'у' => 'u',    'ф' => 'f',    'х' => 'h',    'ц' => 'c',    'ч' => 'ch',
+		'ш' => 'sh',   'щ' => 'sch',  'ь' => '',     'ы' => 'y',    'ъ' => '',
+		'э' => 'e',    'ю' => 'yu',   'я' => 'ya',
+	);
+ 
+	$value = mb_strtolower($value);
+	$value = strtr($value, $converter);
+	$value = mb_ereg_replace('[^-0-9a-z]', '-', $value);
+	$value = mb_ereg_replace('[-]+', '-', $value);
+	$value = trim($value, '-');	
+ 
+	return $value;
+	}
+
 /**
  * Class Jekyll_Export
  *
@@ -157,13 +177,14 @@ class Jekyll_Export {
 			'date'    => get_the_date( 'c', $post ),
 			'author'  => get_userdata( $post->post_author )->display_name,
 			'excerpt' => $post->post_excerpt,
+			'summary' => $post->post_excerpt,
 			'layout'  => get_post_type( $post ),
 			'guid'    => $post->guid,
 		);
 
 		// Preserve exact permalink, since Jekyll doesn't support redirection.
 		if ( 'page' !== $post->post_type ) {
-			$output['permalink'] = str_replace( home_url(), '', get_permalink( $post ) );
+			$output['permalink'] = str_replace( home_url(), '', urldecode(get_permalink( $post )) );
 		}
 
 		// Convert traditional post_meta values, hide hidden values.
@@ -180,10 +201,13 @@ class Jekyll_Export {
 		$post_thumbnail_id = get_post_thumbnail_id( $post );
 
 		if ( $post_thumbnail_id ) {
-			$post_thumbnail_src = wp_get_attachment_image_src( $post_thumbnail_id, 'post-thumbnail' );
+			$post_thumbnail_src = wp_get_attachment_image_src( $post_thumbnail_id, 'full' );
+			//$post_thumbnail_src = wp_get_attachment_image_src( $post_thumbnail_id, 'post-thumbnail' );
 
 			if ( $post_thumbnail_src ) {
 				$output['image'] = str_replace( home_url(), '', $post_thumbnail_src[0] );
+				$output['images'] = ['/images/'.basename($post_thumbnail_src[0])];
+				//'/images/'.date( 'Y-m-d', strtotime( $post->post_date ) ).'-'.$output['id'].'jpg'
 			}
 		}
 
@@ -237,6 +261,7 @@ class Jekyll_Export {
 	 * @return String the converted post content
 	 */
 	function convert_content( $post ) {
+		$excerpt = $post->post_excerpt."<!--more-->\n\n";
 
 		// check if jetpack markdown is available.
 		if ( class_exists( 'WPCom_Markdown' ) ) {
@@ -246,7 +271,7 @@ class Jekyll_Export {
 				// jetpack markdown is available so just return it.
 				$content = apply_filters( 'edit_post_content', $post->post_content, $post->ID );
 
-				return $content;
+				return $excerpt.$content;
 			}
 		}
 
@@ -258,12 +283,12 @@ class Jekyll_Export {
 			// faulty links; return plain HTML.
 			$content = apply_filters( 'jekyll_export_html', $content );
 			$content = apply_filters( 'jekyll_export_content', $content );
-			return $content;
+			return $excerpt.$content;
 		}
 
 		$markdown = apply_filters( 'jekyll_export_markdown', $markdown );
 		$markdown = apply_filters( 'jekyll_export_content', $markdown );
-		return $markdown;
+		return $excerpt.$markdown;
 	}
 
 	/**
@@ -336,7 +361,7 @@ class Jekyll_Export {
 		$this->init_temp_dir();
 		$this->convert_options();
 		$this->convert_posts();
-		$this->convert_uploads();
+		//$this->convert_uploads();
 		$this->zip();
 		ob_end_clean();
 		$this->send();
@@ -390,6 +415,8 @@ class Jekyll_Export {
 
 	}
 
+	
+
 
 	/**
 	 * Write file to temp dir
@@ -402,11 +429,15 @@ class Jekyll_Export {
 		global $wp_filesystem;
 
 		if ( get_post_status( $post ) !== 'publish' ) {
-			$filename = '_drafts/' . sanitize_file_name( get_page_uri( $post->id ) . '-' . ( get_the_title( $post->id ) ) . '.md' );
+			
+			$filename_raw = translit_sef(urldecode(get_page_uri( $post->id ))) . '-' . translit_sef( get_the_title( $post->id ))  . '.md';
+			$filename = '_drafts/' . sanitize_file_name( $filename_raw );
 		} elseif ( get_post_type( $post ) === 'page' ) {
-			$filename = get_page_uri( $post->id ) . '.md';
+			
+			$filename = translit_sef(urldecode(get_page_uri( $post->id ))) . '.md';
 		} else {
-			$filename = '_' . get_post_type( $post ) . 's/' . date( 'Y-m-d', strtotime( $post->post_date ) ) . '-' . sanitize_file_name( $post->post_name ) . '.md';
+			$filename_raw = translit_sef(urldecode($post->post_name));
+			$filename = '_' . get_post_type( $post ) . 's/' . date( 'Y-m-d', strtotime( $post->post_date ) ) . '-' . sanitize_file_name( $filename_raw ) . '.md';
 		}
 
 		$wp_filesystem->mkdir( $this->dir . dirname( $filename ) );
